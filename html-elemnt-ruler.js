@@ -5,6 +5,7 @@ function startElementRuler(options = {}) {
         hoverFill = 'rgba(0, 122, 255, 0.08)',
         edgeColor = '#ff9500',
         centerColor = '#34c759',
+        edgeCenterColor = '#af52de',
         strokeWidth = 2,
         fontSize = 12,
         zIndex = 999999,
@@ -35,15 +36,27 @@ function startElementRuler(options = {}) {
 
     let firstPoint = null;
     let enabled = true;
+
     let isCtrlPressed = false;
     let isAltPressed = false;
+    let isShiftPressed = false;
+
     let lastMouseEvent = null;
+    let measurements = [];
 
     const hoverLayer = document.createElementNS(svgNS, 'g');
     const measureLayer = document.createElementNS(svgNS, 'g');
 
-    svg.appendChild(hoverLayer);
     svg.appendChild(measureLayer);
+    svg.appendChild(hoverLayer);
+
+    function getScrollX() {
+        return window.scrollX || window.pageXOffset || 0;
+    }
+
+    function getScrollY() {
+        return window.scrollY || window.pageYOffset || 0;
+    }
 
     function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
@@ -54,8 +67,28 @@ function startElementRuler(options = {}) {
     }
 
     function clearMeasure() {
-        measureLayer.innerHTML = '';
+        measurements = [];
         firstPoint = null;
+        renderMeasurements();
+        console.log('Измерения очищены');
+    }
+
+    function undoMeasure() {
+        if (firstPoint) {
+            firstPoint = null;
+            renderMeasurements();
+            console.log('Выбор первой точки отменён');
+            return;
+        }
+
+        if (!measurements.length) {
+            console.log('Нет измерений для отмены');
+            return;
+        }
+
+        measurements.pop();
+        renderMeasurements();
+        console.log('Последнее измерение отменено');
     }
 
     function getElementLabel(element) {
@@ -80,12 +113,48 @@ function startElementRuler(options = {}) {
         return label;
     }
 
-    function getNearestEdgePoint(element, clientX, clientY) {
+    function getPageRect(element) {
+        const rect = element.getBoundingClientRect();
+        const scrollX = getScrollX();
+        const scrollY = getScrollY();
+
+        return {
+            left: rect.left + scrollX,
+            top: rect.top + scrollY,
+            right: rect.right + scrollX,
+            bottom: rect.bottom + scrollY,
+            width: rect.width,
+            height: rect.height
+        };
+    }
+
+    function rectToViewport(rect) {
+        const scrollX = getScrollX();
+        const scrollY = getScrollY();
+
+        return {
+            left: rect.left - scrollX,
+            top: rect.top - scrollY,
+            right: rect.right - scrollX,
+            bottom: rect.bottom - scrollY,
+            width: rect.width,
+            height: rect.height
+        };
+    }
+
+    function pointToViewport(point) {
+        return {
+            ...point,
+            x: point.x - getScrollX(),
+            y: point.y - getScrollY()
+        };
+    }
+
+    function getNearestEdgeData(element, clientX, clientY) {
         const rect = element.getBoundingClientRect();
 
         const distances = [
             {
-                type: 'edge',
                 edge: 'left',
                 distance: Math.abs(clientX - rect.left),
                 x: rect.left,
@@ -96,7 +165,6 @@ function startElementRuler(options = {}) {
                 y2: rect.bottom
             },
             {
-                type: 'edge',
                 edge: 'right',
                 distance: Math.abs(clientX - rect.right),
                 x: rect.right,
@@ -107,7 +175,6 @@ function startElementRuler(options = {}) {
                 y2: rect.bottom
             },
             {
-                type: 'edge',
                 edge: 'top',
                 distance: Math.abs(clientY - rect.top),
                 x: clamp(clientX, rect.left, rect.right),
@@ -118,7 +185,6 @@ function startElementRuler(options = {}) {
                 y2: rect.top
             },
             {
-                type: 'edge',
                 edge: 'bottom',
                 distance: Math.abs(clientY - rect.bottom),
                 x: clamp(clientX, rect.left, rect.right),
@@ -131,35 +197,101 @@ function startElementRuler(options = {}) {
         ];
 
         distances.sort((a, b) => a.distance - b.distance);
+        return distances[0];
+    }
+
+    function getNearestEdgePoint(element, clientX, clientY) {
+        const scrollX = getScrollX();
+        const scrollY = getScrollY();
+        const rect = getPageRect(element);
+        const edgeData = getNearestEdgeData(element, clientX, clientY);
 
         return {
+            type: 'edge',
+            edge: edgeData.edge,
+            label: edgeData.edge,
             element,
+            elementLabel: getElementLabel(element),
             rect,
-            label: distances[0].edge,
-            ...distances[0]
+            x: edgeData.x + scrollX,
+            y: edgeData.y + scrollY,
+            x1: edgeData.x1 + scrollX,
+            y1: edgeData.y1 + scrollY,
+            x2: edgeData.x2 + scrollX,
+            y2: edgeData.y2 + scrollY
+        };
+    }
+
+    function getEdgeCenterPoint(element, clientX, clientY) {
+        const scrollX = getScrollX();
+        const scrollY = getScrollY();
+        const rect = getPageRect(element);
+        const edgeData = getNearestEdgeData(element, clientX, clientY);
+
+        let x = edgeData.x;
+        let y = edgeData.y;
+
+        if (edgeData.edge === 'left' || edgeData.edge === 'right') {
+            y = rectToViewport(rect).top + rect.height / 2;
+        }
+
+        if (edgeData.edge === 'top' || edgeData.edge === 'bottom') {
+            x = rectToViewport(rect).left + rect.width / 2;
+        }
+
+        return {
+            type: 'edge-center',
+            edge: edgeData.edge,
+            label: `${edgeData.edge} center`,
+            element,
+            elementLabel: getElementLabel(element),
+            rect,
+            x: x + scrollX,
+            y: y + scrollY,
+            x1: edgeData.x1 + scrollX,
+            y1: edgeData.y1 + scrollY,
+            x2: edgeData.x2 + scrollX,
+            y2: edgeData.y2 + scrollY
         };
     }
 
     function getCenterPoint(element) {
-        const rect = element.getBoundingClientRect();
+        const rect = getPageRect(element);
 
         return {
             type: 'center',
             edge: 'center',
             label: 'center',
             element,
+            elementLabel: getElementLabel(element),
             rect,
             x: rect.left + rect.width / 2,
             y: rect.top + rect.height / 2
         };
     }
 
-    function getPointByMode(element, clientX, clientY, centerMode = false) {
-        if (centerMode) {
+    function getPointByMode(element, clientX, clientY, mode = {}) {
+        if (mode.centerMode) {
             return getCenterPoint(element);
         }
 
+        if (mode.edgeCenterMode) {
+            return getEdgeCenterPoint(element, clientX, clientY);
+        }
+
         return getNearestEdgePoint(element, clientX, clientY);
+    }
+
+    function getPointLabel(point) {
+        if (point.type === 'center') {
+            return 'центр';
+        }
+
+        if (point.type === 'edge-center') {
+            return `центр ${point.edge}`;
+        }
+
+        return point.edge;
     }
 
     function createSvgElement(name, attrs = {}) {
@@ -170,6 +302,48 @@ function startElementRuler(options = {}) {
         });
 
         return el;
+    }
+
+    function appendLabel(layer, text, x, y, options = {}) {
+        const {
+            fill = color,
+            bg = 'white',
+            stroke = fill,
+            anchor = 'middle',
+            weight = '700',
+            paddingX = 6,
+            paddingY = 4
+        } = options;
+
+        const label = createSvgElement('text', {
+            x,
+            y,
+            fill,
+            'font-size': fontSize,
+            'font-family': 'Arial, sans-serif',
+            'font-weight': weight,
+            'text-anchor': anchor
+        });
+
+        label.textContent = text;
+        layer.appendChild(label);
+
+        const box = label.getBBox();
+
+        const labelBg = createSvgElement('rect', {
+            x: box.x - paddingX,
+            y: box.y - paddingY,
+            width: box.width + paddingX * 2,
+            height: box.height + paddingY * 2,
+            rx: 5,
+            fill: bg,
+            stroke,
+            'stroke-width': 1
+        });
+
+        layer.insertBefore(labelBg, label);
+
+        return { label, labelBg };
     }
 
     function getAlignedPoint(pointA, pointB) {
@@ -192,29 +366,30 @@ function startElementRuler(options = {}) {
     }
 
     function drawCenterMark(point, layer = hoverLayer, markColor = centerColor) {
+        const vp = pointToViewport(point);
         const size = 8;
 
         const hLine = createSvgElement('line', {
-            x1: point.x - size,
-            y1: point.y,
-            x2: point.x + size,
-            y2: point.y,
+            x1: vp.x - size,
+            y1: vp.y,
+            x2: vp.x + size,
+            y2: vp.y,
             stroke: markColor,
             'stroke-width': 2
         });
 
         const vLine = createSvgElement('line', {
-            x1: point.x,
-            y1: point.y - size,
-            x2: point.x,
-            y2: point.y + size,
+            x1: vp.x,
+            y1: vp.y - size,
+            x2: vp.x,
+            y2: vp.y + size,
             stroke: markColor,
             'stroke-width': 2
         });
 
         const circle = createSvgElement('circle', {
-            cx: point.x,
-            cy: point.y,
+            cx: vp.x,
+            cy: vp.y,
             r: 4,
             fill: 'white',
             stroke: markColor,
@@ -234,12 +409,24 @@ function startElementRuler(options = {}) {
         }
 
         const centerMode = isAltPressed;
-        const point = getPointByMode(element, clientX, clientY, centerMode);
-        const rect = point.rect;
+        const edgeCenterMode = isShiftPressed && !centerMode;
+
+        const point = getPointByMode(element, clientX, clientY, {
+            centerMode,
+            edgeCenterMode
+        });
+
+        const rect = rectToViewport(point.rect);
 
         if (rect.width <= 0 || rect.height <= 0) {
             return;
         }
+
+        const activeColor = centerMode
+            ? centerColor
+            : edgeCenterMode
+                ? edgeCenterColor
+                : hoverColor;
 
         const box = createSvgElement('rect', {
             x: rect.left,
@@ -247,7 +434,7 @@ function startElementRuler(options = {}) {
             width: rect.width,
             height: rect.height,
             fill: hoverFill,
-            stroke: centerMode ? centerColor : hoverColor,
+            stroke: activeColor,
             'stroke-width': 1,
             'stroke-dasharray': '4 3'
         });
@@ -255,20 +442,22 @@ function startElementRuler(options = {}) {
         hoverLayer.appendChild(box);
 
         if (centerMode) {
+            const vp = pointToViewport(point);
+
             const centerGuideHorizontal = createSvgElement('line', {
                 x1: rect.left,
-                y1: point.y,
+                y1: vp.y,
                 x2: rect.right,
-                y2: point.y,
+                y2: vp.y,
                 stroke: centerColor,
                 'stroke-width': 1,
                 'stroke-dasharray': '3 3'
             });
 
             const centerGuideVertical = createSvgElement('line', {
-                x1: point.x,
+                x1: vp.x,
                 y1: rect.top,
-                x2: point.x,
+                x2: vp.x,
                 y2: rect.bottom,
                 stroke: centerColor,
                 'stroke-width': 1,
@@ -279,170 +468,261 @@ function startElementRuler(options = {}) {
             hoverLayer.appendChild(centerGuideVertical);
             drawCenterMark(point, hoverLayer, centerColor);
         } else {
+            const edgeStart = pointToViewport({ x: point.x1, y: point.y1 });
+            const edgeEnd = pointToViewport({ x: point.x2, y: point.y2 });
+            const vp = pointToViewport(point);
+
             const edge = createSvgElement('line', {
-                x1: point.x1,
-                y1: point.y1,
-                x2: point.x2,
-                y2: point.y2,
-                stroke: edgeColor,
+                x1: edgeStart.x,
+                y1: edgeStart.y,
+                x2: edgeEnd.x,
+                y2: edgeEnd.y,
+                stroke: edgeCenterMode ? edgeCenterColor : edgeColor,
                 'stroke-width': 3
             });
 
-            const dot = createSvgElement('circle', {
-                cx: point.x,
-                cy: point.y,
-                r: 4,
-                fill: edgeColor
-            });
-
             hoverLayer.appendChild(edge);
-            hoverLayer.appendChild(dot);
+
+            if (edgeCenterMode) {
+                const diamond = createSvgElement('rect', {
+                    x: vp.x - 5,
+                    y: vp.y - 5,
+                    width: 10,
+                    height: 10,
+                    fill: 'white',
+                    stroke: edgeCenterColor,
+                    'stroke-width': 2,
+                    transform: `rotate(45 ${vp.x} ${vp.y})`
+                });
+
+                hoverLayer.appendChild(diamond);
+            } else {
+                const dot = createSvgElement('circle', {
+                    cx: vp.x,
+                    cy: vp.y,
+                    r: 4,
+                    fill: edgeColor
+                });
+
+                hoverLayer.appendChild(dot);
+            }
         }
 
         const modeText = [
-            centerMode ? 'ALT: центр' : 'грань',
+            centerMode ? 'ALT: центр элемента' : null,
+            edgeCenterMode ? 'SHIFT: центр грани' : null,
+            !centerMode && !edgeCenterMode ? 'грань' : null,
             isCtrlPressed ? 'CTRL: ровная линия' : null
         ].filter(Boolean).join(' | ');
 
         const labelText = `${getElementLabel(element)} | ${Math.round(rect.width)}×${Math.round(rect.height)}px | ${modeText}`;
 
-        const label = createSvgElement('text', {
-            x: rect.left,
-            y: Math.max(14, rect.top - 8),
-            fill: centerMode ? centerColor : hoverColor,
-            'font-size': fontSize,
-            'font-family': 'Arial, sans-serif',
-            'font-weight': '700'
-        });
-
-        label.textContent = labelText;
-
-        hoverLayer.appendChild(label);
-
-        const labelBox = label.getBBox();
-
-        const labelBg = createSvgElement('rect', {
-            x: labelBox.x - 5,
-            y: labelBox.y - 3,
-            width: labelBox.width + 10,
-            height: labelBox.height + 6,
-            rx: 4,
-            fill: 'white',
-            stroke: centerMode ? centerColor : hoverColor,
-            'stroke-width': 1
-        });
-
-        hoverLayer.insertBefore(labelBg, label);
+        appendLabel(
+            hoverLayer,
+            labelText,
+            rect.left,
+            Math.max(14, rect.top - 8),
+            {
+                fill: activeColor,
+                stroke: activeColor,
+                anchor: 'start'
+            }
+        );
     }
 
-    function drawSelectedPoint(point) {
+    function drawPointMarker(point, index, layer = measureLayer) {
+        const vp = pointToViewport(point);
+
         if (point.type === 'center') {
-            drawCenterMark(point, measureLayer, color);
-            return;
+            drawCenterMark(point, layer, color);
+        } else if (point.type === 'edge-center') {
+            const diamond = createSvgElement('rect', {
+                x: vp.x - 6,
+                y: vp.y - 6,
+                width: 12,
+                height: 12,
+                fill: 'white',
+                stroke: color,
+                'stroke-width': 2,
+                transform: `rotate(45 ${vp.x} ${vp.y})`
+            });
+
+            layer.appendChild(diamond);
+        } else {
+            const circle = createSvgElement('circle', {
+                cx: vp.x,
+                cy: vp.y,
+                r: 5,
+                fill: color,
+                stroke: 'white',
+                'stroke-width': 2
+            });
+
+            layer.appendChild(circle);
         }
 
-        const circle = createSvgElement('circle', {
-            cx: point.x,
-            cy: point.y,
-            r: 5,
-            fill: color,
-            stroke: 'white',
-            'stroke-width': 2
+        appendLabel(layer, String(index), vp.x + 14, vp.y - 10, {
+            fill: 'white',
+            bg: color,
+            stroke: color,
+            anchor: 'middle',
+            paddingX: 6,
+            paddingY: 3
         });
-
-        measureLayer.appendChild(circle);
     }
 
-    function drawLine(pointA, pointB, forceStraight = false) {
+    function drawMeasurement(item) {
+        const layer = measureLayer;
+
+        const pointA = item.pointA;
+        const pointB = item.pointB;
+
         let finalPointB = pointB;
-        let distance;
         let modeLabel = '';
 
-        if (forceStraight) {
+        if (item.forceStraight) {
             finalPointB = getAlignedPoint(pointA, pointB);
 
             if (finalPointB.alignMode === 'horizontal') {
-                distance = Math.round(Math.abs(finalPointB.x - pointA.x));
-                modeLabel = ' по X';
+                modeLabel = ' | по X';
             } else {
-                distance = Math.round(Math.abs(finalPointB.y - pointA.y));
-                modeLabel = ' по Y';
+                modeLabel = ' | по Y';
             }
-        } else {
-            const dx = finalPointB.x - pointA.x;
-            const dy = finalPointB.y - pointA.y;
+        }
 
-            distance = Math.round(Math.sqrt(dx * dx + dy * dy));
+        const viewA = pointToViewport(pointA);
+        const viewB = pointToViewport(pointB);
+        const viewFinalB = pointToViewport(finalPointB);
+
+        const dx = Math.round(Math.abs(finalPointB.x - pointA.x));
+        const dy = Math.round(Math.abs(finalPointB.y - pointA.y));
+        const distance = Math.round(
+            Math.sqrt(
+                Math.pow(finalPointB.x - pointA.x, 2) +
+                Math.pow(finalPointB.y - pointA.y, 2)
+            )
+        );
+
+        const axisCorner = {
+            x: viewFinalB.x,
+            y: viewA.y
+        };
+
+        if (!item.forceStraight && dx > 0 && dy > 0) {
+            const xGuide = createSvgElement('line', {
+                x1: viewA.x,
+                y1: viewA.y,
+                x2: axisCorner.x,
+                y2: axisCorner.y,
+                stroke: color,
+                'stroke-width': 1,
+                'stroke-dasharray': '4 4',
+                opacity: '0.55'
+            });
+
+            const yGuide = createSvgElement('line', {
+                x1: axisCorner.x,
+                y1: axisCorner.y,
+                x2: viewFinalB.x,
+                y2: viewFinalB.y,
+                stroke: color,
+                'stroke-width': 1,
+                'stroke-dasharray': '4 4',
+                opacity: '0.55'
+            });
+
+            layer.appendChild(xGuide);
+            layer.appendChild(yGuide);
+
+            appendLabel(layer, `X: ${dx}px`, (viewA.x + axisCorner.x) / 2, axisCorner.y - 8, {
+                fill: color,
+                stroke: color
+            });
+
+            appendLabel(layer, `Y: ${dy}px`, viewFinalB.x + 34, (axisCorner.y + viewFinalB.y) / 2, {
+                fill: color,
+                stroke: color
+            });
         }
 
         const line = createSvgElement('line', {
-            x1: pointA.x,
-            y1: pointA.y,
-            x2: finalPointB.x,
-            y2: finalPointB.y,
+            x1: viewA.x,
+            y1: viewA.y,
+            x2: viewFinalB.x,
+            y2: viewFinalB.y,
             stroke: color,
             'stroke-width': strokeWidth
         });
 
-        const guideLine = forceStraight
-            ? createSvgElement('line', {
-                x1: pointB.x,
-                y1: pointB.y,
-                x2: finalPointB.x,
-                y2: finalPointB.y,
+        layer.appendChild(line);
+
+        if (item.forceStraight) {
+            const guideLine = createSvgElement('line', {
+                x1: viewB.x,
+                y1: viewB.y,
+                x2: viewFinalB.x,
+                y2: viewFinalB.y,
                 stroke: color,
                 'stroke-width': 1,
                 'stroke-dasharray': '4 4',
                 opacity: '0.6'
-            })
-            : null;
+            });
 
-        const midX = (pointA.x + finalPointB.x) / 2;
-        const midY = (pointA.y + finalPointB.y) / 2;
-
-        const label = createSvgElement('text', {
-            x: midX,
-            y: midY - 8,
-            fill: color,
-            'font-size': fontSize,
-            'font-family': 'Arial, sans-serif',
-            'font-weight': '700',
-            'text-anchor': 'middle'
-        });
-
-        const fromLabel = pointA.type === 'center' ? 'центр' : pointA.edge;
-        const toLabel = pointB.type === 'center' ? 'центр' : pointB.edge;
-
-        label.textContent = `${distance}px${modeLabel} | ${fromLabel} → ${toLabel}`;
-
-        measureLayer.appendChild(line);
-
-        if (guideLine) {
-            measureLayer.appendChild(guideLine);
+            layer.appendChild(guideLine);
         }
 
-        measureLayer.appendChild(label);
+        drawPointMarker(pointA, 1, layer);
+        drawPointMarker(pointB, 2, layer);
 
-        const labelBox = label.getBBox();
+        const midX = (viewA.x + viewFinalB.x) / 2;
+        const midY = (viewA.y + viewFinalB.y) / 2;
 
-        const labelBg = createSvgElement('rect', {
-            x: labelBox.x - 5,
-            y: labelBox.y - 3,
-            width: labelBox.width + 10,
-            height: labelBox.height + 6,
-            rx: 4,
-            fill: 'white',
-            stroke: color,
-            'stroke-width': 1
+        const fromLabel = getPointLabel(pointA);
+        const toLabel = getPointLabel(pointB);
+
+        appendLabel(
+            layer,
+            `${distance}px | X: ${dx}px | Y: ${dy}px${modeLabel} | ${fromLabel} → ${toLabel}`,
+            midX,
+            midY - 10,
+            {
+                fill: color,
+                stroke: color
+            }
+        );
+
+        return {
+            distance,
+            dx,
+            dy,
+            fromLabel,
+            toLabel
+        };
+    }
+
+    function renderMeasurements() {
+        measureLayer.innerHTML = '';
+
+        measurements.forEach(item => {
+            drawMeasurement(item);
         });
 
-        measureLayer.insertBefore(labelBg, label);
+        if (firstPoint) {
+            drawPointMarker(firstPoint, 1, measureLayer);
 
-        console.log('Расстояние:', distance + 'px' + modeLabel);
-        console.log('От:', fromLabel, pointA.element);
-        console.log('До:', toLabel, pointB.element);
+            const vp = pointToViewport(firstPoint);
 
-        return distance;
+            appendLabel(
+                measureLayer,
+                `Точка 1: ${getPointLabel(firstPoint)}`,
+                vp.x,
+                vp.y + 28,
+                {
+                    fill: color,
+                    stroke: color
+                }
+            );
+        }
     }
 
     function getRealTarget(event) {
@@ -467,8 +747,10 @@ function startElementRuler(options = {}) {
         if (!enabled) return;
 
         lastMouseEvent = event;
+
         isCtrlPressed = event.ctrlKey;
         isAltPressed = event.altKey;
+        isShiftPressed = event.shiftKey;
 
         const target = getRealTarget(event);
         drawHover(target, event.clientX, event.clientY);
@@ -486,28 +768,54 @@ function startElementRuler(options = {}) {
         event.preventDefault();
         event.stopPropagation();
 
-        const centerMode = event.altKey;
-        const point = getPointByMode(target, event.clientX, event.clientY, centerMode);
-
-        drawSelectedPoint(point);
+        const point = getPointByMode(target, event.clientX, event.clientY, {
+            centerMode: event.altKey,
+            edgeCenterMode: event.shiftKey && !event.altKey
+        });
 
         if (!firstPoint) {
             firstPoint = point;
+            renderMeasurements();
 
             console.log(
                 'Первая точка выбрана:',
-                point.type === 'center' ? 'центр' : point.edge,
+                getPointLabel(point),
                 point.element
             );
 
             return;
         }
 
-        drawLine(firstPoint, point, event.ctrlKey);
+        const measurement = {
+            pointA: firstPoint,
+            pointB: point,
+            forceStraight: event.ctrlKey
+        };
+
+        measurements.push(measurement);
+
+        const result = drawMeasurement(measurement);
+
+        console.log(
+            'Расстояние:',
+            result.distance + 'px',
+            'X:',
+            result.dx + 'px',
+            'Y:',
+            result.dy + 'px'
+        );
+        console.log('От:', result.fromLabel, firstPoint.element);
+        console.log('До:', result.toLabel, point.element);
+
         firstPoint = null;
+        renderMeasurements();
     }
 
     function onKeyDown(event) {
+        if (!enabled) return;
+
+        const key = event.key.toLowerCase();
+
         if (event.key === 'Control') {
             isCtrlPressed = true;
             redrawHoverFromLastMouse();
@@ -518,17 +826,27 @@ function startElementRuler(options = {}) {
             redrawHoverFromLastMouse();
         }
 
+        if (event.key === 'Shift') {
+            isShiftPressed = true;
+            redrawHoverFromLastMouse();
+        }
+
         if (event.key === 'Escape') {
             destroy();
         }
 
-        if (event.key.toLowerCase() === 'c') {
+        if (key === 'c') {
             clearMeasure();
-            console.log('Измерения очищены');
+        }
+
+        if (key === 'z') {
+            undoMeasure();
         }
     }
 
     function onKeyUp(event) {
+        if (!enabled) return;
+
         if (event.key === 'Control') {
             isCtrlPressed = false;
             redrawHoverFromLastMouse();
@@ -538,6 +856,18 @@ function startElementRuler(options = {}) {
             isAltPressed = false;
             redrawHoverFromLastMouse();
         }
+
+        if (event.key === 'Shift') {
+            isShiftPressed = false;
+            redrawHoverFromLastMouse();
+        }
+    }
+
+    function onScrollOrResize() {
+        if (!enabled) return;
+
+        renderMeasurements();
+        redrawHoverFromLastMouse();
     }
 
     function destroy() {
@@ -547,6 +877,8 @@ function startElementRuler(options = {}) {
         document.removeEventListener('click', onClick, true);
         document.removeEventListener('keydown', onKeyDown, true);
         document.removeEventListener('keyup', onKeyUp, true);
+        window.removeEventListener('scroll', onScrollOrResize, true);
+        window.removeEventListener('resize', onScrollOrResize, true);
 
         svg.remove();
 
@@ -558,18 +890,14 @@ function startElementRuler(options = {}) {
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('keyup', onKeyUp, true);
 
-    console.log('JS-линейка включена.');
-    console.log('Наведи мышь на элемент — увидишь его границы.');
-    console.log('Клик 1 — выбрать первую точку.');
-    console.log('Клик 2 — выбрать вторую точку.');
-    console.log('ALT зажат — выбор центра элемента.');
-    console.log('CTRL зажат на втором клике — линия будет строго горизонтальной или вертикальной.');
-    console.log('ALT + CTRL — центр элемента + ровная линия.');
-    console.log('C — очистить измерения.');
-    console.log('Escape — выключить.');
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize, true);
+
+    console.log('HTML-ElementRuler started');
 
     return {
         destroy,
-        clear: clearMeasure
+        clear: clearMeasure,
+        undo: undoMeasure
     };
 }
